@@ -70,6 +70,7 @@
     <div class="settings">
       Rate <input id="rate" type="number" min="0" step="10">
       <input id="currency" style="width:60px" maxlength="4">/h
+      <span id="fxWrap">· 1 <span id="fxCur">CAD</span> = <input id="fx" type="number" min="0" step="0.01" style="width:70px"> SEK <span class="muted" id="fxNote"></span></span>
     </div>
   </header>
 
@@ -109,6 +110,7 @@
       <div class="summary">
         <div><div class="muted">Total time</div><div class="big" id="sumTime">0:00</div></div>
         <div><div class="muted">Billable</div><div class="amt" id="sumAmt">–</div></div>
+        <div id="sekBox"><div class="muted">≈ SEK</div><div class="amt" id="sumSek" style="color:#a78bfa">–</div></div>
         <button class="ghost small" id="eyeBtn" title="Show/hide totals" style="align-self:center">👁</button>
       </div>
     </div>
@@ -141,7 +143,8 @@ let S = load();
 function load(){
   try{ return JSON.parse(localStorage.getItem(KEY)) || fresh(); }catch(e){ return fresh(); }
 }
-function fresh(){ return { rate:200, currency:"CAD", clients:["RigCraftor"], entries:[], running:null, hideTotals:false }; }
+function fresh(){ return { rate:200, currency:"CAD", clients:["RigCraftor"], entries:[], running:null, hideTotals:false, fx:7.1, fxDate:null }; }
+if(S.fx==null){ S.fx=7.1; S.fxDate=null; }
 let editingId = null;
 function save(){ localStorage.setItem(KEY, JSON.stringify(S)); }
 
@@ -149,6 +152,7 @@ function fmtHMS(sec){ sec=Math.max(0,Math.round(sec)); const h=Math.floor(sec/36
 function fmtHM(sec){ sec=Math.max(0,Math.round(sec)); const h=Math.floor(sec/3600),m=Math.floor(sec%3600/60); return h+":"+pad(m); }
 function hoursOf(sec){ return sec/3600; }
 function money(n){ return S.currency+" $"+n.toLocaleString(undefined,{minimumFractionDigits:2,maximumFractionDigits:2}); }
+function moneySEK(n){ return (n*S.fx).toLocaleString("sv-SE",{maximumFractionDigits:0})+" kr"; }
 function monthKey(iso){ return iso.slice(0,7); }
 function toast(t){ const el=$("#toast"); el.textContent=t; el.classList.add("show"); setTimeout(()=>el.classList.remove("show"),1800); }
 
@@ -166,7 +170,20 @@ $("#addClientBtn").onclick=()=>{ const n=prompt("New client name:"); if(n&&n.tri
 // ---- settings ----
 $("#rate").value=S.rate; $("#currency").value=S.currency;
 $("#rate").oninput=e=>{ S.rate=parseFloat(e.target.value)||0; save(); render(); };
-$("#currency").oninput=e=>{ S.currency=e.target.value.trim()||"CAD"; save(); render(); };
+$("#currency").oninput=e=>{ S.currency=e.target.value.trim()||"CAD"; save(); render(); fetchFx(); };
+
+// ---- FX (→ SEK) ----
+$("#fx").value=S.fx;
+$("#fx").oninput=e=>{ const v=parseFloat(e.target.value); if(v>0){ S.fx=v; S.fxDate="manuell"; save(); render(); } };
+async function fetchFx(){
+  const cur=S.currency.toUpperCase();
+  if(cur==="SEK") { render(); return; }
+  try{
+    const r=await fetch("https://api.frankfurter.app/latest?from="+encodeURIComponent(cur)+"&to=SEK");
+    const j=await r.json();
+    if(j&&j.rates&&j.rates.SEK){ S.fx=j.rates.SEK; S.fxDate=j.date; save(); $("#fx").value=S.fx; render(); }
+  }catch(e){ /* offline — behåller sparad kurs */ }
+}
 
 // ---- timer ----
 let tick=null;
@@ -235,6 +252,12 @@ function render(){
   const hid = !!S.hideTotals;
   $("#sumTime").textContent = hid ? "•••" : (fmtHM(totSec)+"  ("+hrs.toFixed(2)+" h)");
   $("#sumAmt").textContent  = hid ? "•••" : money(hrs*S.rate);
+  const isSEK=S.currency.toUpperCase()==="SEK";
+  $("#sekBox").style.display = isSEK ? "none" : "";
+  $("#fxWrap").style.display = isSEK ? "none" : "";
+  $("#sumSek").textContent  = hid ? "•••" : moneySEK(hrs*S.rate);
+  $("#fxCur").textContent=S.currency.toUpperCase();
+  $("#fxNote").textContent=S.fxDate ? "("+S.fxDate+")" : "";
   const eye=$("#eyeBtn"); if(eye) eye.textContent = hid ? "🙈" : "👁";
 
   const lbl = ($("#fClient").value==="__all"?"All clients":$("#fClient").value)+" · "+($("#fMonth").value==="__all"?"All time":$("#fMonth").value);
@@ -326,7 +349,7 @@ function dl(name,content,type){
 }
 
 // ---- init ----
-refreshMonths(); fillClients(); startTick(); render();
+refreshMonths(); fillClients(); startTick(); render(); fetchFx();
 </script>
 </body>
 </html>
