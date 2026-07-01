@@ -1,0 +1,300 @@
+<!DOCTYPE html>
+<html lang="sv">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Axellie — Time Tracker</title>
+<style>
+  :root{
+    --bg:#0b0f17; --card:#121826; --line:#243044; --ink:#e7ecf3; --muted:#9aa7bd;
+    --cyan:#38bdf8; --violet:#8b5cf6; --green:#34d399; --red:#f87171;
+  }
+  *{box-sizing:border-box}
+  body{margin:0;font-family:"Segoe UI",system-ui,Arial,sans-serif;background:var(--bg);
+    background-image:radial-gradient(900px 500px at 100% -10%,rgba(56,189,248,.12),transparent 60%),
+                     radial-gradient(800px 600px at -10% 110%,rgba(139,92,246,.12),transparent 55%);
+    color:var(--ink);line-height:1.5;min-height:100vh}
+  .wrap{max-width:920px;margin:0 auto;padding:22px 18px 60px}
+  header{display:flex;align-items:center;gap:12px;margin-bottom:22px;flex-wrap:wrap}
+  .dot{width:11px;height:11px;border-radius:50%;background:linear-gradient(135deg,var(--cyan),var(--violet));box-shadow:0 0 12px rgba(56,189,248,.8)}
+  h1{font-size:20px;margin:0;font-weight:800;letter-spacing:-.3px}
+  h1 span{background:linear-gradient(100deg,#fff,#7dd3fc 60%,#a78bfa);-webkit-background-clip:text;background-clip:text;color:transparent}
+  .settings{margin-left:auto;display:flex;gap:8px;align-items:center;font-size:13px;color:var(--muted)}
+  .settings input{width:70px}
+  input,select,textarea,button{font:inherit}
+  input,select{background:#0e1421;border:1px solid var(--line);color:var(--ink);border-radius:9px;padding:9px 11px;outline:none}
+  input:focus,select:focus{border-color:var(--cyan)}
+  .card{background:var(--card);border:1px solid var(--line);border-radius:16px;padding:18px;margin-bottom:16px;box-shadow:0 10px 30px rgba(0,0,0,.25)}
+  .timerbox{display:flex;gap:12px;align-items:center;flex-wrap:wrap}
+  .timerbox select{min-width:150px}
+  .timerbox .desc{flex:1;min-width:180px}
+  .clock{font-size:34px;font-weight:800;font-variant-numeric:tabular-nums;letter-spacing:1px;min-width:160px;text-align:center}
+  .clock.run{color:var(--green)}
+  button{cursor:pointer;border:none;border-radius:10px;padding:11px 18px;font-weight:700;color:#fff;transition:filter .15s,transform .1s}
+  button:active{transform:translateY(1px)}
+  .start{background:linear-gradient(135deg,var(--cyan),var(--violet))}
+  .stop{background:var(--red)}
+  .ghost{background:#1a2233;border:1px solid var(--line);color:var(--ink)}
+  .ghost:hover{border-color:var(--cyan)}
+  .small{padding:7px 12px;font-size:13px}
+  .row{display:flex;gap:10px;flex-wrap:wrap;align-items:center}
+  .muted{color:var(--muted);font-size:13px}
+  label.f{display:flex;flex-direction:column;gap:4px;font-size:12px;color:var(--muted)}
+  .summary{display:flex;gap:26px;flex-wrap:wrap;align-items:baseline}
+  .summary .big{font-size:30px;font-weight:800}
+  .summary .amt{font-size:30px;font-weight:800;color:#7dd3fc}
+  table{width:100%;border-collapse:collapse;font-size:14px}
+  th,td{text-align:left;padding:9px 8px;border-bottom:1px solid var(--line);vertical-align:top}
+  th{font-size:11px;text-transform:uppercase;letter-spacing:.06em;color:var(--muted)}
+  td.num{text-align:right;font-variant-numeric:tabular-nums;white-space:nowrap}
+  .del{background:none;color:var(--muted);padding:2px 8px;font-size:16px}
+  .del:hover{color:var(--red)}
+  .toolbar{display:flex;gap:8px;flex-wrap:wrap;margin-top:12px}
+  .toast{position:fixed;bottom:20px;left:50%;transform:translateX(-50%);background:#132; border:1px solid var(--green);
+    color:#c9f7e5;padding:10px 18px;border-radius:10px;opacity:0;transition:opacity .3s;pointer-events:none;font-weight:600}
+  .toast.show{opacity:1}
+  h2{font-size:14px;text-transform:uppercase;letter-spacing:.07em;color:var(--cyan);margin:0 0 12px}
+  .empty{color:var(--muted);text-align:center;padding:24px}
+  @media print{
+    body{background:#fff;color:#000}
+    .card,header .settings,.timerbox,.toolbar,.filters,.del,.dot,.addrow{display:none!important}
+    #invoiceView{display:block!important;color:#000}
+  }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <div class="dot"></div>
+    <h1>Axellie <span>Time Tracker</span></h1>
+    <div class="settings">
+      Rate <input id="rate" type="number" min="0" step="10">
+      <input id="currency" style="width:60px" maxlength="4">/h
+    </div>
+  </header>
+
+  <!-- TIMER -->
+  <div class="card">
+    <div class="timerbox">
+      <select id="tClient" title="Client"></select>
+      <input class="desc" id="tDesc" placeholder="What are you working on? (e.g. Kickoff session)">
+      <div class="clock" id="clock">0:00:00</div>
+      <button class="start" id="toggleBtn">▶ Start</button>
+    </div>
+    <div class="row" style="margin-top:12px">
+      <button class="ghost small" id="addClientBtn">＋ Client</button>
+      <span class="muted" id="runningNote"></span>
+    </div>
+  </div>
+
+  <!-- MANUAL ADD -->
+  <div class="card addrow">
+    <h2>Add time manually</h2>
+    <div class="row">
+      <label class="f">Date<input id="mDate" type="date"></label>
+      <label class="f">Client<select id="mClient"></select></label>
+      <label class="f" style="flex:1;min-width:180px">Description<input id="mDesc" placeholder="e.g. Prep + async support"></label>
+      <label class="f">Minutes<input id="mMin" type="number" min="1" step="1" style="width:90px" placeholder="30"></label>
+      <button class="ghost" id="mAdd" style="align-self:flex-end">Add</button>
+    </div>
+  </div>
+
+  <!-- SUMMARY + FILTERS -->
+  <div class="card">
+    <div class="row filters" style="justify-content:space-between">
+      <div class="row">
+        <label class="f">Month<select id="fMonth"></select></label>
+        <label class="f">Client<select id="fClient"></select></label>
+      </div>
+      <div class="summary">
+        <div><div class="muted">Total time</div><div class="big" id="sumTime">0:00</div></div>
+        <div><div class="muted">Billable</div><div class="amt" id="sumAmt">–</div></div>
+      </div>
+    </div>
+    <div class="toolbar">
+      <button class="ghost small" id="expCsv">⬇ Export CSV</button>
+      <button class="ghost small" id="copyLog">📋 Copy invoice log</button>
+      <button class="ghost small" id="printLog">🖨 Print</button>
+      <button class="ghost small" id="backup">💾 Backup (JSON)</button>
+    </div>
+  </div>
+
+  <!-- ENTRIES -->
+  <div class="card">
+    <h2 id="listTitle">Entries</h2>
+    <div id="tableWrap"></div>
+  </div>
+
+  <!-- print-only invoice view -->
+  <div id="invoiceView" style="display:none"></div>
+</div>
+
+<div class="toast" id="toast"></div>
+
+<script>
+const KEY="axellie-timetracker-v1";
+const $=s=>document.querySelector(s);
+const pad=n=>String(n).padStart(2,"0");
+
+let S = load();
+function load(){
+  try{ return JSON.parse(localStorage.getItem(KEY)) || fresh(); }catch(e){ return fresh(); }
+}
+function fresh(){ return { rate:200, currency:"CAD", clients:["RigCraftor"], entries:[], running:null }; }
+function save(){ localStorage.setItem(KEY, JSON.stringify(S)); }
+
+function fmtHMS(sec){ sec=Math.max(0,Math.round(sec)); const h=Math.floor(sec/3600),m=Math.floor(sec%3600/60),s=sec%60; return h+":"+pad(m)+":"+pad(s); }
+function fmtHM(sec){ sec=Math.max(0,Math.round(sec)); const h=Math.floor(sec/3600),m=Math.floor(sec%3600/60); return h+":"+pad(m); }
+function hoursOf(sec){ return sec/3600; }
+function money(n){ return S.currency+" $"+n.toLocaleString(undefined,{minimumFractionDigits:2,maximumFractionDigits:2}); }
+function monthKey(iso){ return iso.slice(0,7); }
+function toast(t){ const el=$("#toast"); el.textContent=t; el.classList.add("show"); setTimeout(()=>el.classList.remove("show"),1800); }
+
+// ---- client selectors ----
+function fillClients(){
+  const opts = c => S.clients.map(x=>`<option ${x===c?"selected":""}>${x}</option>`).join("");
+  $("#tClient").innerHTML=opts(S.clients[0]);
+  $("#mClient").innerHTML=opts(S.clients[0]);
+  const cur=$("#fClient").value||"__all";
+  $("#fClient").innerHTML=`<option value="__all">All clients</option>`+opts().replace(/selected/g,"");
+  if([...$("#fClient").options].some(o=>o.value===cur)) $("#fClient").value=cur;
+}
+$("#addClientBtn").onclick=()=>{ const n=prompt("New client name:"); if(n&&n.trim()){ if(!S.clients.includes(n.trim())) S.clients.push(n.trim()); save(); fillClients(); render(); } };
+
+// ---- settings ----
+$("#rate").value=S.rate; $("#currency").value=S.currency;
+$("#rate").oninput=e=>{ S.rate=parseFloat(e.target.value)||0; save(); render(); };
+$("#currency").oninput=e=>{ S.currency=e.target.value.trim()||"CAD"; save(); render(); };
+
+// ---- timer ----
+let tick=null;
+function startTick(){ clearInterval(tick); tick=setInterval(updateClock,1000); updateClock(); }
+function updateClock(){
+  if(S.running){
+    const sec=(Date.now()-new Date(S.running.startISO).getTime())/1000;
+    $("#clock").textContent=fmtHMS(sec); $("#clock").classList.add("run");
+    $("#toggleBtn").textContent="■ Stop"; $("#toggleBtn").className="stop";
+    $("#runningNote").textContent="Running — "+S.running.client+(S.running.desc?" · "+S.running.desc:"");
+  }else{
+    $("#clock").textContent="0:00:00"; $("#clock").classList.remove("run");
+    $("#toggleBtn").textContent="▶ Start"; $("#toggleBtn").className="start";
+    $("#runningNote").textContent="";
+  }
+}
+$("#toggleBtn").onclick=()=>{
+  if(S.running){
+    const startISO=S.running.startISO, endISO=new Date().toISOString();
+    const sec=(new Date(endISO)-new Date(startISO))/1000;
+    S.entries.push({ id:Date.now()+"", client:S.running.client, desc:S.running.desc||"(no description)", startISO, endISO, seconds:Math.round(sec) });
+    S.running=null; save(); startTick(); render(); toast("Saved "+fmtHM(sec));
+  }else{
+    S.running={ client:$("#tClient").value, desc:$("#tDesc").value.trim(), startISO:new Date().toISOString() };
+    $("#tDesc").value=""; save(); startTick();
+  }
+};
+
+// ---- manual add ----
+$("#mDate").value=new Date().toISOString().slice(0,10);
+$("#mAdd").onclick=()=>{
+  const min=parseInt($("#mMin").value,10);
+  if(!min||min<1){ toast("Enter minutes"); return; }
+  const d=$("#mDate").value||new Date().toISOString().slice(0,10);
+  const startISO=new Date(d+"T09:00:00").toISOString();
+  const endISO=new Date(new Date(startISO).getTime()+min*60000).toISOString();
+  S.entries.push({ id:Date.now()+"", client:$("#mClient").value, desc:$("#mDesc").value.trim()||"(manual)", startISO, endISO, seconds:min*60 });
+  $("#mDesc").value=""; $("#mMin").value=""; save(); render(); toast("Added "+min+" min");
+};
+
+// ---- filters ----
+function refreshMonths(){
+  const months=[...new Set(S.entries.map(e=>monthKey(e.startISO)))].sort().reverse();
+  const nowM=new Date().toISOString().slice(0,7);
+  if(!months.includes(nowM)) months.unshift(nowM);
+  const cur=$("#fMonth").value;
+  $("#fMonth").innerHTML=`<option value="__all">All time</option>`+months.map(m=>`<option value="${m}">${m}</option>`).join("");
+  $("#fMonth").value = (cur && [...$("#fMonth").options].some(o=>o.value===cur)) ? cur : nowM;
+}
+$("#fMonth").onchange=render; $("#fClient").onchange=render;
+
+function filtered(){
+  const m=$("#fMonth").value, c=$("#fClient").value;
+  return S.entries
+    .filter(e=> (m==="__all"||monthKey(e.startISO)===m) && (c==="__all"||e.client===c))
+    .sort((a,b)=> new Date(a.startISO)-new Date(b.startISO));
+}
+
+// ---- render ----
+function render(){
+  fillClients();
+  const list=filtered();
+  const totSec=list.reduce((s,e)=>s+e.seconds,0);
+  const hrs=hoursOf(totSec);
+  $("#sumTime").textContent=fmtHM(totSec)+"  ("+hrs.toFixed(2)+" h)";
+  $("#sumAmt").textContent=money(hrs*S.rate);
+
+  const lbl = ($("#fClient").value==="__all"?"All clients":$("#fClient").value)+" · "+($("#fMonth").value==="__all"?"All time":$("#fMonth").value);
+  $("#listTitle").textContent="Entries — "+lbl;
+
+  if(!list.length){ $("#tableWrap").innerHTML=`<div class="empty">No time logged for this filter yet.</div>`; return; }
+  let rows=list.map(e=>{
+    const d=new Date(e.startISO);
+    const date=d.toISOString().slice(0,10);
+    const time=pad(d.getHours())+":"+pad(d.getMinutes());
+    return `<tr>
+      <td>${date}<div class="muted">${time}</div></td>
+      <td>${esc(e.client)}</td>
+      <td>${esc(e.desc)}</td>
+      <td class="num">${fmtHM(e.seconds)}</td>
+      <td class="num">${hoursOf(e.seconds).toFixed(2)}</td>
+      <td class="num"><button class="del" data-id="${e.id}" title="Delete">✕</button></td>
+    </tr>`;
+  }).join("");
+  $("#tableWrap").innerHTML=`<table>
+    <thead><tr><th>Date</th><th>Client</th><th>Description</th><th class="num">Time</th><th class="num">Hours</th><th></th></tr></thead>
+    <tbody>${rows}</tbody>
+    <tfoot><tr><td colspan="3" style="font-weight:700">Total</td>
+      <td class="num" style="font-weight:700">${fmtHM(totSec)}</td>
+      <td class="num" style="font-weight:700">${hrs.toFixed(2)}</td><td></td></tr></tfoot>
+  </table>`;
+  document.querySelectorAll(".del").forEach(b=>b.onclick=()=>{
+    if(confirm("Delete this entry?")){ S.entries=S.entries.filter(x=>x.id!==b.dataset.id); save(); render(); }
+  });
+}
+function esc(s){ return (s||"").replace(/[&<>]/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;"}[c])); }
+
+// ---- exports ----
+function invoiceText(){
+  const list=filtered(), totSec=list.reduce((s,e)=>s+e.seconds,0), hrs=hoursOf(totSec);
+  const who=$("#fClient").value==="__all"?"All clients":$("#fClient").value;
+  const per=$("#fMonth").value==="__all"?"All time":$("#fMonth").value;
+  let lines=[`TIME LOG — ${who} — ${per}`,`Axellie Holding AB · rate ${money(S.rate)}/h`,""];
+  list.forEach(e=>{ lines.push(`${e.startISO.slice(0,10)}  ${fmtHM(e.seconds)}  (${hoursOf(e.seconds).toFixed(2)}h)  ${e.desc}`); });
+  lines.push("", `TOTAL: ${hrs.toFixed(2)} h  ×  ${money(S.rate)}  =  ${money(hrs*S.rate)}`);
+  return lines.join("\n");
+}
+$("#copyLog").onclick=async()=>{ try{ await navigator.clipboard.writeText(invoiceText()); toast("Invoice log copied ✓"); }catch(e){ alert(invoiceText()); } };
+$("#printLog").onclick=()=>{ $("#invoiceView").innerHTML="<pre style='font-size:13px'>"+esc(invoiceText())+"</pre>"; window.print(); };
+$("#expCsv").onclick=()=>{
+  const list=filtered();
+  const head="Date,Start,End,Client,Description,Hours\n";
+  const body=list.map(e=>{
+    const s=new Date(e.startISO), en=new Date(e.endISO);
+    const cell=v=>`"${(v||"").toString().replace(/"/g,'""')}"`;
+    return [e.startISO.slice(0,10), pad(s.getHours())+":"+pad(s.getMinutes()), pad(en.getHours())+":"+pad(en.getMinutes()),
+            cell(e.client), cell(e.desc), hoursOf(e.seconds).toFixed(2)].join(",");
+  }).join("\n");
+  dl("timelog_"+($("#fMonth").value)+".csv", head+body, "text/csv");
+  toast("CSV exported ✓");
+};
+$("#backup").onclick=()=>{ dl("axellie-timetracker-backup.json", JSON.stringify(S,null,2), "application/json"); toast("Backup saved ✓"); };
+function dl(name,content,type){
+  const a=document.createElement("a");
+  a.href=URL.createObjectURL(new Blob([content],{type}));
+  a.download=name; a.click(); URL.revokeObjectURL(a.href);
+}
+
+// ---- init ----
+refreshMonths(); fillClients(); startTick(); render();
+</script>
+</body>
+</html>
