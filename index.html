@@ -55,11 +55,47 @@
   .toast.show{opacity:1}
   h2{font-size:14px;text-transform:uppercase;letter-spacing:.07em;color:var(--cyan);margin:0 0 12px}
   .empty{color:var(--muted);text-align:center;padding:24px}
+  /* ---------- PDF / print report ---------- */
+  #invoiceView{display:none}
   @media print{
-    body{background:#fff;color:#000}
-    .card,header .settings,.timerbox,.toolbar,.filters,.del,.dot,.addrow{display:none!important}
-    #invoiceView{display:block!important;color:#000}
+    @page{size:A4;margin:16mm 15mm 18mm}
+    body{background:#fff!important;color:#0f172a;background-image:none!important}
+    .wrap>*:not(#invoiceView){display:none!important}
+    .wrap{max-width:none;padding:0}
+    #invoiceView{display:block!important}
   }
+  #invoiceView{font-family:"Segoe UI",system-ui,Arial,sans-serif;color:#0f172a;line-height:1.45}
+  .inv-head{display:flex;justify-content:space-between;align-items:flex-start;
+    border-bottom:3px solid #0ea5e9;padding-bottom:14px;margin-bottom:20px}
+  .inv-brand{font-size:24px;font-weight:800;letter-spacing:-.4px}
+  .inv-brand small{display:block;font-size:11px;font-weight:600;letter-spacing:.14em;
+    text-transform:uppercase;color:#64748b;margin-top:2px}
+  .inv-meta{text-align:right;font-size:12.5px;color:#334155}
+  .inv-meta b{color:#0f172a}
+  .inv-title{font-size:17px;font-weight:800;margin:0 0 2px;letter-spacing:-.2px}
+  .inv-sub{color:#64748b;font-size:12.5px;margin-bottom:16px}
+  .inv-cards{display:flex;gap:10px;margin-bottom:20px}
+  .inv-cards .c{flex:1;border:1px solid #e2e8f0;border-radius:8px;padding:10px 14px;background:#f8fafc}
+  .inv-cards .c .l{font-size:10px;text-transform:uppercase;letter-spacing:.08em;color:#64748b;margin-bottom:2px}
+  .inv-cards .c .v{font-size:17px;font-weight:800;font-variant-numeric:tabular-nums}
+  .inv-cards .c.hl{background:#0f172a;border-color:#0f172a;-webkit-print-color-adjust:exact;print-color-adjust:exact}
+  .inv-cards .c.hl .l{color:#94a3b8}
+  .inv-cards .c.hl .v{color:#fff}
+  table.inv{width:100%;border-collapse:collapse;font-size:12.5px;margin-bottom:6px}
+  table.inv th{font-size:10px;text-transform:uppercase;letter-spacing:.08em;color:#64748b;
+    text-align:left;padding:7px 8px;border-bottom:2px solid #cbd5e1}
+  table.inv td{padding:7px 8px;border-bottom:1px solid #e2e8f0;vertical-align:top;color:#0f172a}
+  table.inv .num{text-align:right;font-variant-numeric:tabular-nums;white-space:nowrap}
+  table.inv tr{page-break-inside:avoid}
+  table.inv .wk td{background:#f1f5f9;font-weight:700;font-size:11px;text-transform:uppercase;
+    letter-spacing:.06em;color:#475569;-webkit-print-color-adjust:exact;print-color-adjust:exact}
+  table.inv tfoot td{border-top:2px solid #0f172a;border-bottom:none;font-weight:800;padding-top:9px}
+  .inv-totalbox{margin-left:auto;width:290px;margin-top:10px;font-size:13px}
+  .inv-totalbox .r{display:flex;justify-content:space-between;padding:5px 10px}
+  .inv-totalbox .r.grand{background:#0f172a;color:#fff;border-radius:8px;font-weight:800;font-size:15px;
+    padding:9px 12px;margin-top:4px;-webkit-print-color-adjust:exact;print-color-adjust:exact}
+  .inv-foot{margin-top:28px;padding-top:10px;border-top:1px solid #e2e8f0;
+    display:flex;justify-content:space-between;font-size:10.5px;color:#94a3b8}
 </style>
 </head>
 <body>
@@ -117,7 +153,7 @@
     <div class="toolbar">
       <button class="ghost small" id="expCsv">⬇ Export CSV</button>
       <button class="ghost small" id="copyLog">📋 Copy invoice log</button>
-      <button class="ghost small" id="printLog">🖨 Print</button>
+      <button class="ghost small" id="printLog">📄 PDF report</button>
       <button class="ghost small" id="backup">💾 Backup (JSON)</button>
     </div>
   </div>
@@ -328,7 +364,70 @@ function invoiceText(){
   return lines.join("\n");
 }
 $("#copyLog").onclick=async()=>{ try{ await navigator.clipboard.writeText(invoiceText()); toast("Invoice log copied ✓"); }catch(e){ alert(invoiceText()); } };
-$("#printLog").onclick=()=>{ $("#invoiceView").innerHTML="<pre style='font-size:13px'>"+esc(invoiceText())+"</pre>"; window.print(); };
+function isoWeek(d){
+  const t=new Date(Date.UTC(d.getFullYear(),d.getMonth(),d.getDate()));
+  t.setUTCDate(t.getUTCDate()+4-(t.getUTCDay()||7));
+  const y0=new Date(Date.UTC(t.getUTCFullYear(),0,1));
+  return Math.ceil(((t-y0)/86400000+1)/7);
+}
+function buildInvoiceHTML(){
+  const list=filtered(), totSec=list.reduce((s,e)=>s+e.seconds,0), hrs=hoursOf(totSec);
+  const who=$("#fClient").value==="__all"?"All clients":$("#fClient").value;
+  const per=$("#fMonth").value==="__all"?"All time":$("#fMonth").value;
+  const today=new Date().toISOString().slice(0,10);
+  const isSEK=S.currency.toUpperCase()==="SEK";
+  const amount=hrs*S.rate;
+
+  let rows="", curWeek=null, wkSec=0;
+  const wkRow=()=> curWeek===null ? "" :
+    `<tr class="wk"><td colspan="2">Week ${curWeek}</td><td class="num">${fmtHM(wkSec)}</td><td class="num">${hoursOf(wkSec).toFixed(2)}</td><td class="num">${money(hoursOf(wkSec)*S.rate)}</td></tr>`;
+  list.forEach(e=>{
+    const d=new Date(e.startISO), w=isoWeek(d);
+    if(w!==curWeek){ rows+=wkRow(); curWeek=w; wkSec=0; }
+    wkSec+=e.seconds;
+    rows+=`<tr>
+      <td class="num" style="text-align:left">${e.startISO.slice(0,10)}</td>
+      <td>${esc(e.desc)}${$("#fClient").value==="__all"?` <span style="color:#94a3b8">· ${esc(e.client)}</span>`:""}</td>
+      <td class="num">${fmtHM(e.seconds)}</td>
+      <td class="num">${hoursOf(e.seconds).toFixed(2)}</td>
+      <td class="num">${money(hoursOf(e.seconds)*S.rate)}</td>
+    </tr>`;
+  });
+
+  return `
+  <div class="inv-head">
+    <div class="inv-brand">Axellie<small>Axellie Holding AB</small></div>
+    <div class="inv-meta">
+      <b>Time Report</b><br>
+      Client: <b>${esc(who)}</b><br>
+      Period: <b>${per}</b><br>
+      Generated: ${today}
+    </div>
+  </div>
+  <div class="inv-title">Time Report — ${esc(who)}</div>
+  <div class="inv-sub">Period ${per} · ${list.length} entr${list.length===1?"y":"ies"} · Rate ${money(S.rate)}/h${isSEK?"":` · 1 ${S.currency.toUpperCase()} = ${S.fx} SEK${S.fxDate?" ("+S.fxDate+")":""}`}</div>
+  <div class="inv-cards">
+    <div class="c"><div class="l">Total time</div><div class="v">${fmtHM(totSec)} h</div></div>
+    <div class="c"><div class="l">Billable hours</div><div class="v">${hrs.toFixed(2)}</div></div>
+    <div class="c"><div class="l">Rate</div><div class="v">${money(S.rate)}/h</div></div>
+    <div class="c hl"><div class="l">Amount</div><div class="v">${money(amount)}</div></div>
+  </div>
+  <table class="inv">
+    <thead><tr><th>Date</th><th>Description</th><th class="num">Time</th><th class="num">Hours</th><th class="num">Amount</th></tr></thead>
+    <tbody>${rows}${wkRow()}</tbody>
+    <tfoot><tr><td colspan="2">Total</td><td class="num">${fmtHM(totSec)}</td><td class="num">${hrs.toFixed(2)}</td><td class="num">${money(amount)}</td></tr></tfoot>
+  </table>
+  <div class="inv-totalbox">
+    <div class="r"><span>${hrs.toFixed(2)} h × ${money(S.rate)}</span><span>${money(amount)}</span></div>
+    ${isSEK?"":`<div class="r"><span>≈ SEK (${S.fx})</span><span>${moneySEK(amount)}</span></div>`}
+    <div class="r grand"><span>Total</span><span>${money(amount)}</span></div>
+  </div>
+  <div class="inv-foot">
+    <span>Axellie Holding AB</span>
+    <span>Generated ${today} · Axellie Time Tracker</span>
+  </div>`;
+}
+$("#printLog").onclick=()=>{ $("#invoiceView").innerHTML=buildInvoiceHTML(); window.print(); };
 $("#expCsv").onclick=()=>{
   const list=filtered();
   const head="Date,Start,End,Client,Description,Hours\n";
