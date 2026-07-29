@@ -425,8 +425,10 @@ function render(){
   const unb=S.entries.filter(e=>!e.invId && (fc==="__all"||e.client===fc));
   const unbSec=unb.reduce((s,e)=>s+e.seconds,0), unbHrs=hoursOf(unbSec);
   const days=unb.map(dayOf).sort();
+  const anyEntries=S.entries.some(e=>fc==="__all"||e.client===fc);
   $("#unbilledNote").innerHTML = !unb.length
-    ? `✔ Everything is marked as invoiced${fc==="__all"?"":" for <b>"+esc(fc)+"</b>"}.`
+    ? (anyEntries ? `✔ Everything is marked as invoiced${fc==="__all"?"":" for <b>"+esc(fc)+"</b>"}.`
+                  : `No time logged${fc==="__all"?"":" for <b>"+esc(fc)+"</b>"} yet.`)
     : `Not invoiced yet${fc==="__all"?" (all clients)":" — <b>"+esc(fc)+"</b>"}: <b>${unb.length}</b> entries · <b>${hid?"•••":unbHrs.toFixed(2)+" h"}</b> · `
       +`<span class="amt2">${hid?"•••":money(unbHrs*S.rate)}</span>`
       +(isSEK||hid?"":` (≈ ${moneySEK(unbHrs*S.rate)})`)
