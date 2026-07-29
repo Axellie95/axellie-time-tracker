@@ -55,6 +55,15 @@
   .toast.show{opacity:1}
   h2{font-size:14px;text-transform:uppercase;letter-spacing:.07em;color:var(--cyan);margin:0 0 12px}
   .empty{color:var(--muted);text-align:center;padding:24px}
+  /* ---------- invoicing ---------- */
+  .badge{display:inline-block;font-size:11px;font-weight:700;padding:2px 8px;border-radius:999px;white-space:nowrap}
+  .badge.inv{background:rgba(52,211,153,.14);color:var(--green);border:1px solid rgba(52,211,153,.35)}
+  .badge.un{background:rgba(154,167,189,.10);color:var(--muted);border:1px solid var(--line)}
+  tr.isinv td:not(:last-child){opacity:.62}
+  .invbar{display:flex;gap:10px;flex-wrap:wrap;align-items:flex-end}
+  .invbar button{align-self:flex-end}
+  #unbilledNote b{color:var(--ink)}
+  #unbilledNote .amt2{color:#7dd3fc;font-weight:700}
   /* ---------- PDF / print report ---------- */
   #invoiceView{display:none}
   @media print{
@@ -142,6 +151,11 @@
       <div class="row">
         <label class="f">Month<select id="fMonth"></select></label>
         <label class="f">Client<select id="fClient"></select></label>
+        <label class="f">Status<select id="fStatus">
+          <option value="__all">All</option>
+          <option value="unbilled">Not invoiced</option>
+          <option value="invoiced">Invoiced</option>
+        </select></label>
       </div>
       <div class="summary">
         <div><div class="muted">Total time</div><div class="big" id="sumTime">0:00</div></div>
@@ -150,12 +164,29 @@
         <button class="ghost small" id="eyeBtn" title="Show/hide totals" style="align-self:center">👁</button>
       </div>
     </div>
+    <div class="muted" id="unbilledNote" style="margin-top:10px"></div>
     <div class="toolbar">
       <button class="ghost small" id="expCsv">⬇ Export CSV</button>
       <button class="ghost small" id="copyLog">📋 Copy invoice log</button>
       <button class="ghost small" id="printLog">📄 PDF report</button>
       <button class="ghost small" id="backup">💾 Backup (JSON)</button>
     </div>
+  </div>
+
+  <!-- INVOICING -->
+  <div class="card">
+    <h2>Invoicing — mark a period as invoiced</h2>
+    <div class="invbar">
+      <label class="f">Client<select id="invClient"></select></label>
+      <label class="f">From<input id="invFrom" type="date"></label>
+      <label class="f">To<input id="invTo" type="date"></label>
+      <label class="f">Invoice #<input id="invNo" style="width:120px" placeholder="e.g. 2026-001"></label>
+      <label class="f">Invoice date<input id="invDate" type="date"></label>
+      <button class="ghost" id="invSuggest" title="Fill From/To with everything not yet invoiced">↺ Suggest period</button>
+      <button class="start" id="invMark">✔ Mark as invoiced</button>
+    </div>
+    <div class="muted" id="invPreview" style="margin-top:12px"></div>
+    <div id="invList" style="margin-top:14px"></div>
   </div>
 
   <!-- ENTRIES -->
@@ -179,17 +210,20 @@ let S = load();
 function load(){
   try{ return JSON.parse(localStorage.getItem(KEY)) || fresh(); }catch(e){ return fresh(); }
 }
-function fresh(){ return { rate:200, currency:"CAD", clients:["RigCraftor"], entries:[], running:null, hideTotals:false, fx:7.1, fxDate:null }; }
+function fresh(){ return { rate:200, currency:"CAD", clients:["RigCraftor"], entries:[], invoices:[], running:null, hideTotals:false, fx:7.1, fxDate:null }; }
 if(S.fx==null){ S.fx=7.1; S.fxDate=null; }
+if(!Array.isArray(S.invoices)) S.invoices=[];   // entries carry .invId → S.invoices[].id
 let editingId = null;
 function save(){ localStorage.setItem(KEY, JSON.stringify(S)); }
 
 function fmtHMS(sec){ sec=Math.max(0,Math.round(sec)); const h=Math.floor(sec/3600),m=Math.floor(sec%3600/60),s=sec%60; return h+":"+pad(m)+":"+pad(s); }
 function fmtHM(sec){ sec=Math.max(0,Math.round(sec)); const h=Math.floor(sec/3600),m=Math.floor(sec%3600/60); return h+":"+pad(m); }
 function hoursOf(sec){ return sec/3600; }
-function money(n){ return S.currency+" $"+n.toLocaleString(undefined,{minimumFractionDigits:2,maximumFractionDigits:2}); }
+function money(n,cur){ return (cur||S.currency)+" $"+n.toLocaleString(undefined,{minimumFractionDigits:2,maximumFractionDigits:2}); }
 function moneySEK(n){ return (n*S.fx).toLocaleString("sv-SE",{maximumFractionDigits:0})+" kr"; }
 function monthKey(iso){ return iso.slice(0,7); }
+function dayOf(e){ return e.startISO.slice(0,10); }
+function invOf(e){ return e.invId ? S.invoices.find(i=>i.id===e.invId) : null; }
 function toast(t){ const el=$("#toast"); el.textContent=t; el.classList.add("show"); setTimeout(()=>el.classList.remove("show"),1800); }
 
 // ---- client selectors ----
@@ -200,6 +234,11 @@ function fillClients(){
   const cur=$("#fClient").value||"__all";
   $("#fClient").innerHTML=`<option value="__all">All clients</option>`+opts().replace(/selected/g,"");
   if([...$("#fClient").options].some(o=>o.value===cur)) $("#fClient").value=cur;
+  // invoicing is always per client
+  const ic=$("#invClient").value;
+  $("#invClient").innerHTML=opts();
+  if(S.clients.includes(ic)) $("#invClient").value=ic;
+  else if(S.clients.includes($("#fClient").value)) $("#invClient").value=$("#fClient").value;
 }
 $("#addClientBtn").onclick=()=>{ const n=prompt("New client name:"); if(n&&n.trim()){ if(!S.clients.includes(n.trim())) S.clients.push(n.trim()); save(); fillClients(); render(); } };
 
@@ -269,14 +308,95 @@ function refreshMonths(){
   $("#fMonth").innerHTML=`<option value="__all">All time</option>`+months.map(m=>`<option value="${m}">${m}</option>`).join("");
   $("#fMonth").value = (cur && [...$("#fMonth").options].some(o=>o.value===cur)) ? cur : nowM;
 }
-$("#fMonth").onchange=render; $("#fClient").onchange=render;
+$("#fMonth").onchange=render; $("#fClient").onchange=render; $("#fStatus").onchange=render;
 $("#eyeBtn").onclick=()=>{ S.hideTotals=!S.hideTotals; save(); render(); };
 
 function filtered(){
-  const m=$("#fMonth").value, c=$("#fClient").value;
+  const m=$("#fMonth").value, c=$("#fClient").value, st=$("#fStatus").value;
   return S.entries
-    .filter(e=> (m==="__all"||monthKey(e.startISO)===m) && (c==="__all"||e.client===c))
+    .filter(e=> (m==="__all"||monthKey(e.startISO)===m)
+             && (c==="__all"||e.client===c)
+             && (st==="__all" || (st==="invoiced" ? !!e.invId : !e.invId)))
     .sort((a,b)=> new Date(a.startISO)-new Date(b.startISO));
+}
+
+// ---- invoicing ----
+function invTargets(){
+  const c=$("#invClient").value, from=$("#invFrom").value, to=$("#invTo").value;
+  if(!c||!from||!to||from>to) return [];
+  return S.entries.filter(e=> e.client===c && !e.invId && dayOf(e)>=from && dayOf(e)<=to)
+                  .sort((a,b)=> new Date(a.startISO)-new Date(b.startISO));
+}
+function updateInvPreview(){
+  const c=$("#invClient").value, from=$("#invFrom").value, to=$("#invTo").value;
+  const el=$("#invPreview");
+  if(!from||!to){ el.innerHTML="Pick a period — only entries that are <b>not already invoiced</b> will be marked."; return; }
+  if(from>to){ el.innerHTML="⚠ <b>From</b> is after <b>To</b>."; return; }
+  const t=invTargets();
+  if(!t.length){ el.innerHTML=`Nothing left to invoice for <b>${esc(c)}</b> between ${from} and ${to}.`; return; }
+  const sec=t.reduce((s,e)=>s+e.seconds,0), hrs=hoursOf(sec);
+  el.innerHTML=`Will mark <b>${t.length}</b> entr${t.length===1?"y":"ies"} · <b>${hrs.toFixed(2)} h</b> · <span class="amt2">${money(hrs*S.rate)}</span>`
+    +(S.currency.toUpperCase()==="SEK"?"":` (≈ ${moneySEK(hrs*S.rate)})`)
+    +` for <b>${esc(c)}</b>, ${from} → ${to}.`;
+}
+function suggestPeriod(){
+  const c=$("#invClient").value;
+  const days=S.entries.filter(e=>e.client===c && !e.invId).map(dayOf).sort();
+  const today=new Date().toISOString().slice(0,10);
+  $("#invFrom").value = days.length ? days[0] : today;
+  $("#invTo").value   = days.length ? days[days.length-1] : today;
+  updateInvPreview();
+}
+$("#invSuggest").onclick=suggestPeriod;
+$("#invClient").onchange=()=>{ suggestPeriod(); };
+$("#invFrom").oninput=updateInvPreview; $("#invTo").oninput=updateInvPreview;
+
+$("#invMark").onclick=()=>{
+  const c=$("#invClient").value, from=$("#invFrom").value, to=$("#invTo").value;
+  if(!c){ toast("Add a client first"); return; }
+  if(!from||!to){ toast("Pick From and To"); return; }
+  if(from>to){ toast("From is after To"); return; }
+  const t=invTargets();
+  if(!t.length){ toast("No uninvoiced entries in that period"); return; }
+  const sec=t.reduce((s,e)=>s+e.seconds,0), hrs=hoursOf(sec);
+  const no=$("#invNo").value.trim();
+  const date=$("#invDate").value||new Date().toISOString().slice(0,10);
+  if(!confirm(`Mark as invoiced?\n\n${c}\n${from} → ${to}\n${t.length} entries · ${hrs.toFixed(2)} h · ${money(hrs*S.rate)}`
+    +(no?`\nInvoice ${no} (${date})`:`\nNo invoice number (${date})`))) return;
+  const id="inv"+Date.now();
+  S.invoices.push({ id, no:no||"—", client:c, from, to, date, count:t.length, seconds:sec,
+                    rate:S.rate, currency:S.currency, amount:hrs*S.rate });
+  t.forEach(e=>e.invId=id);
+  $("#invNo").value="";
+  save(); render(); suggestPeriod();
+  toast("Marked "+t.length+" entries as invoiced ✓");
+};
+
+function renderInvoices(){
+  const el=$("#invList");
+  if(!S.invoices.length){ el.innerHTML=`<div class="muted">No periods marked as invoiced yet.</div>`; return; }
+  const rows=[...S.invoices].sort((a,b)=> (b.date+b.from).localeCompare(a.date+a.from)).map(i=>{
+    const open=S.entries.filter(e=>e.invId===i.id).length;
+    return `<tr>
+      <td><span class="badge inv">✔ ${esc(i.no)}</span></td>
+      <td>${esc(i.client)}</td>
+      <td>${i.from} → ${i.to}<div class="muted">invoiced ${i.date}</div></td>
+      <td class="num">${open}</td>
+      <td class="num">${hoursOf(i.seconds).toFixed(2)}</td>
+      <td class="num">${S.hideTotals?"•••":money(i.amount,i.currency)}</td>
+      <td class="num"><button class="del unmark" data-inv="${i.id}" title="Undo — make these entries uninvoiced again">↺</button></td>
+    </tr>`;
+  }).join("");
+  el.innerHTML=`<table>
+    <thead><tr><th>Invoice</th><th>Client</th><th>Period</th><th class="num">Entries</th><th class="num">Hours</th><th class="num">Amount</th><th></th></tr></thead>
+    <tbody>${rows}</tbody></table>`;
+  el.querySelectorAll(".unmark").forEach(b=>b.onclick=()=>{
+    const i=S.invoices.find(x=>x.id===b.dataset.inv); if(!i) return;
+    if(!confirm(`Undo invoice ${i.no} (${i.client}, ${i.from} → ${i.to})?\nIts ${i.count} entries become uninvoiced again.`)) return;
+    S.entries.forEach(e=>{ if(e.invId===i.id) delete e.invId; });
+    S.invoices=S.invoices.filter(x=>x.id!==i.id);
+    save(); render(); toast("Invoice unmarked");
+  });
 }
 
 // ---- render ----
@@ -296,8 +416,22 @@ function render(){
   $("#fxNote").textContent=S.fxDate ? "("+S.fxDate+")" : "";
   const eye=$("#eyeBtn"); if(eye) eye.textContent = hid ? "🙈" : "👁";
 
-  const lbl = ($("#fClient").value==="__all"?"All clients":$("#fClient").value)+" · "+($("#fMonth").value==="__all"?"All time":$("#fMonth").value);
+  const stLbl={__all:"",unbilled:" · not invoiced",invoiced:" · invoiced"}[$("#fStatus").value]||"";
+  const lbl = ($("#fClient").value==="__all"?"All clients":$("#fClient").value)+" · "+($("#fMonth").value==="__all"?"All time":$("#fMonth").value)+stLbl;
   $("#listTitle").textContent="Entries — "+lbl;
+
+  // uninvoiced across ALL time for the selected client — what's left to bill
+  const fc=$("#fClient").value;
+  const unb=S.entries.filter(e=>!e.invId && (fc==="__all"||e.client===fc));
+  const unbSec=unb.reduce((s,e)=>s+e.seconds,0), unbHrs=hoursOf(unbSec);
+  const days=unb.map(dayOf).sort();
+  $("#unbilledNote").innerHTML = !unb.length
+    ? `✔ Everything is marked as invoiced${fc==="__all"?"":" for <b>"+esc(fc)+"</b>"}.`
+    : `Not invoiced yet${fc==="__all"?" (all clients)":" — <b>"+esc(fc)+"</b>"}: <b>${unb.length}</b> entries · <b>${hid?"•••":unbHrs.toFixed(2)+" h"}</b> · `
+      +`<span class="amt2">${hid?"•••":money(unbHrs*S.rate)}</span>`
+      +(isSEK||hid?"":` (≈ ${moneySEK(unbHrs*S.rate)})`)
+      +` · ${days[0]} → ${days[days.length-1]}`;
+  renderInvoices(); updateInvPreview();
 
   if(!list.length){ $("#tableWrap").innerHTML=`<div class="empty">No time logged for this filter yet.</div>`; return; }
   let rows=list.map(e=>{
@@ -310,28 +444,35 @@ function render(){
         <td><input type="date" id="eDate" value="${date}" style="width:135px"></td>
         <td><select id="eClient">${copts}</select></td>
         <td><input type="text" id="eDesc" value="${esc(e.desc).replace(/"/g,"&quot;")}" style="width:100%"></td>
-        <td class="num" colspan="2"><input type="number" id="eMin" min="1" value="${Math.max(1,Math.round(e.seconds/60))}" style="width:80px"> min</td>
+        <td class="num" colspan="3"><input type="number" id="eMin" min="1" value="${Math.max(1,Math.round(e.seconds/60))}" style="width:80px"> min</td>
         <td class="num" style="white-space:nowrap">
           <button class="start" id="eSave" style="padding:6px 12px">✓</button>
           <button class="del" id="eCancel" title="Cancel">✕</button>
         </td>
       </tr>`;
     }
-    return `<tr>
+    const inv=invOf(e);
+    const invCell = inv
+      ? `<span class="badge inv" title="Invoiced ${inv.date} · ${inv.from} → ${inv.to}">✔ ${esc(inv.no)}</span>`
+      : `<span class="badge un">Not invoiced</span>`;
+    return `<tr class="${inv?"isinv":""}">
       <td>${date}<div class="muted">${time}</div></td>
       <td>${esc(e.client)}</td>
       <td>${esc(e.desc)}</td>
       <td class="num">${fmtHM(e.seconds)}</td>
       <td class="num">${hoursOf(e.seconds).toFixed(2)}</td>
+      <td>${invCell}</td>
       <td class="num" style="white-space:nowrap"><button class="del editbtn" data-eid="${e.id}" title="Edit">✎</button><button class="del" data-id="${e.id}" title="Delete">✕</button></td>
     </tr>`;
   }).join("");
+  const invSec=list.filter(e=>e.invId).reduce((s,e)=>s+e.seconds,0);
   $("#tableWrap").innerHTML=`<table>
-    <thead><tr><th>Date</th><th>Client</th><th>Description</th><th class="num">Time</th><th class="num">Hours</th><th></th></tr></thead>
+    <thead><tr><th>Date</th><th>Client</th><th>Description</th><th class="num">Time</th><th class="num">Hours</th><th>Invoice</th><th></th></tr></thead>
     <tbody>${rows}</tbody>
     <tfoot><tr><td colspan="3" style="font-weight:700">Total</td>
       <td class="num" style="font-weight:700">${hid?"•••":fmtHM(totSec)}</td>
-      <td class="num" style="font-weight:700">${hid?"•••":hrs.toFixed(2)}</td><td></td></tr></tfoot>
+      <td class="num" style="font-weight:700">${hid?"•••":hrs.toFixed(2)}</td>
+      <td colspan="2" class="muted">${hid?"":hoursOf(invSec).toFixed(2)+" h invoiced · "+hoursOf(totSec-invSec).toFixed(2)+" h left"}</td></tr></tfoot>
   </table>`;
   document.querySelectorAll(".editbtn").forEach(b=>b.onclick=()=>{ editingId=b.dataset.eid; render(); });
   const eS=$("#eSave"), eC=$("#eCancel");
@@ -348,7 +489,11 @@ function render(){
     editingId=null; save(); render(); toast("Entry updated ✓");
   };
   document.querySelectorAll(".del[data-id]").forEach(b=>b.onclick=()=>{
-    if(confirm("Delete this entry?")){ S.entries=S.entries.filter(x=>x.id!==b.dataset.id); save(); render(); }
+    const ent=S.entries.find(x=>x.id===b.dataset.id);
+    const inv=ent&&invOf(ent);
+    if(confirm("Delete this entry?"+(inv?`\n\n⚠ It is already invoiced (${inv.no}) — the invoice total will no longer match.`:""))){
+      S.entries=S.entries.filter(x=>x.id!==b.dataset.id); save(); render();
+    }
   });
 }
 function esc(s){ return (s||"").replace(/[&<>]/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;"}[c])); }
@@ -358,8 +503,10 @@ function invoiceText(){
   const list=filtered(), totSec=list.reduce((s,e)=>s+e.seconds,0), hrs=hoursOf(totSec);
   const who=$("#fClient").value==="__all"?"All clients":$("#fClient").value;
   const per=$("#fMonth").value==="__all"?"All time":$("#fMonth").value;
-  let lines=[`TIME LOG — ${who} — ${per}`,`Axellie Holding AB · rate ${money(S.rate)}/h`,""];
-  list.forEach(e=>{ lines.push(`${e.startISO.slice(0,10)}  ${fmtHM(e.seconds)}  (${hoursOf(e.seconds).toFixed(2)}h)  ${e.desc}`); });
+  const stTxt={__all:"",unbilled:" — NOT INVOICED ONLY",invoiced:" — INVOICED ONLY"}[$("#fStatus").value]||"";
+  let lines=[`TIME LOG — ${who} — ${per}${stTxt}`,`Axellie Holding AB · rate ${money(S.rate)}/h`,""];
+  list.forEach(e=>{ const iv=invOf(e);
+    lines.push(`${e.startISO.slice(0,10)}  ${fmtHM(e.seconds)}  (${hoursOf(e.seconds).toFixed(2)}h)  ${e.desc}${iv?"  [invoiced "+iv.no+"]":""}`); });
   lines.push("", `TOTAL: ${hrs.toFixed(2)} h  ×  ${money(S.rate)}  =  ${money(hrs*S.rate)}`);
   return lines.join("\n");
 }
@@ -405,7 +552,8 @@ function buildInvoiceHTML(){
     </div>
   </div>
   <div class="inv-title">Time Report — ${esc(who)}</div>
-  <div class="inv-sub">Period ${per} · ${list.length} entr${list.length===1?"y":"ies"} · Rate ${money(S.rate)}/h${isSEK?"":` · 1 ${S.currency.toUpperCase()} = ${S.fx} SEK${S.fxDate?" ("+S.fxDate+")":""}`}</div>
+  <div class="inv-sub">Period ${per} · ${list.length} entr${list.length===1?"y":"ies"} · Rate ${money(S.rate)}/h${isSEK?"":` · 1 ${S.currency.toUpperCase()} = ${S.fx} SEK${S.fxDate?" ("+S.fxDate+")":""}`}${
+    {__all:"",unbilled:" · Not-yet-invoiced hours only",invoiced:" · Already-invoiced hours only"}[$("#fStatus").value]||""}</div>
   <div class="inv-cards">
     <div class="c"><div class="l">Total time</div><div class="v">${fmtHM(totSec)} h</div></div>
     <div class="c"><div class="l">Billable hours</div><div class="v">${hrs.toFixed(2)}</div></div>
@@ -430,12 +578,13 @@ function buildInvoiceHTML(){
 $("#printLog").onclick=()=>{ $("#invoiceView").innerHTML=buildInvoiceHTML(); window.print(); };
 $("#expCsv").onclick=()=>{
   const list=filtered();
-  const head="Date,Start,End,Client,Description,Hours\n";
+  const head="Date,Start,End,Client,Description,Hours,Invoiced,Invoice,InvoiceDate\n";
   const body=list.map(e=>{
-    const s=new Date(e.startISO), en=new Date(e.endISO);
+    const s=new Date(e.startISO), en=new Date(e.endISO), iv=invOf(e);
     const cell=v=>`"${(v||"").toString().replace(/"/g,'""')}"`;
     return [e.startISO.slice(0,10), pad(s.getHours())+":"+pad(s.getMinutes()), pad(en.getHours())+":"+pad(en.getMinutes()),
-            cell(e.client), cell(e.desc), hoursOf(e.seconds).toFixed(2)].join(",");
+            cell(e.client), cell(e.desc), hoursOf(e.seconds).toFixed(2),
+            iv?"yes":"no", cell(iv?iv.no:""), iv?iv.date:""].join(",");
   }).join("\n");
   dl("timelog_"+($("#fMonth").value)+".csv", head+body, "text/csv");
   toast("CSV exported ✓");
@@ -449,6 +598,8 @@ function dl(name,content,type){
 
 // ---- init ----
 refreshMonths(); fillClients(); startTick(); render(); fetchFx();
+$("#invDate").value=new Date().toISOString().slice(0,10);
+suggestPeriod();
 </script>
 </body>
 </html>
